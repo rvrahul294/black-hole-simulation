@@ -1,0 +1,7 @@
+CompileFlags:
+  Compiler: C:/mingw64/bin/g++.exe
+  Add:
+    - --target=x86_64-w64-windows-gnu
+    - -IC:/mingw64/include
+    - -IC:/glfw-3.5.1.bin.WIN64/include
+    - -std=c++17

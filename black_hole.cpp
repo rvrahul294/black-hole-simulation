@@ -1,5 +1,6 @@
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <glm/glm.hpp>
@@ -90,24 +91,40 @@ struct Ray {
   double x;
   double y;
   vec2 dir;
+  vector<vec2> trail;
+
   Ray(vec2(pos), vec2(dir)) : x(pos.x), y(pos.y), dir(dir) {}
   void draw() {
-    glColor3f(1.0, 1.0, 1.0);
-    glPointSize(2.0f);
-    glBegin(GL_POINTS);
-    glVertex2f(x, y);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glLineWidth(1.0f);
+
+    size_t N = trail.size();
+    if (N < 2)
+      return;
+
+    glBegin(GL_LINE_STRIP);
+    for (size_t i = 0; i < N; i++) {
+      float alpha = float(i) / float(N - 1);
+      glColor4f(1.0, 1.0, 1.0, std::max(0.5f, alpha));
+      glVertex2f(trail[i].x, trail[i].y);
+    }
     glEnd();
   }
 
   void step() {
     x += dir.x * c;
     y += dir.y * c;
+    trail.push_back({x, y});
   }
 };
 vector<Ray> rays;
 
 int main() {
-  rays.push_back(Ray(vec2(-engine.width, 0), vec2(1, 0)));
+  for (float y = -engine.height; y < engine.height; y += 1.5e10) {
+    rays.push_back(Ray(vec2(-engine.width, y), vec2(1.0, 0.0)));
+  }
+  rays.push_back(Ray(vec2(-engine.width, 0.0), vec2(1.0, 0.0)));
   while (!glfwWindowShouldClose(engine.window)) {
     engine.run();
     SagaA.draw();

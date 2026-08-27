@@ -85,15 +85,38 @@ struct BlackHole {
   }
 };
 BlackHole SagaA(vec2(engine.width / 2.0, 0.0), 8.54e36);
+
 struct Ray {
-  vec2 position;
-  vec2 direction;
+  double x;
+  double y;
+  vec2 dir;
+  Ray(vec2(pos), vec2(dir)) : x(pos.x), y(pos.y), dir(dir) {}
+  void draw() {
+    glColor3f(1.0, 1.0, 1.0);
+    glPointSize(2.0f);
+    glBegin(GL_POINTS);
+    glVertex2f(x, y);
+    glEnd();
+  }
+
+  void step() {
+    x += dir.x * c;
+    y += dir.y * c;
+  }
 };
+vector<Ray> rays;
 
 int main() {
+  rays.push_back(Ray(vec2(-engine.width, 0), vec2(1, 0)));
   while (!glfwWindowShouldClose(engine.window)) {
     engine.run();
     SagaA.draw();
+
+    for (auto &ray : rays) {
+      ray.draw();
+      ray.step();
+    }
+
     glfwSwapBuffers(engine.window);
     glfwPollEvents();
   }

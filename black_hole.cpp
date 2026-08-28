@@ -19,6 +19,7 @@ using namespace glm;
 const double G = 6.674e-11;
 const double c = 299792458.0;
 
+struct Tele {};
 struct Engine {
   GLFWwindow *window;
   int WIDTH = 800;

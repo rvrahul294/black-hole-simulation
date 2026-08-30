@@ -86,15 +86,22 @@ struct BlackHole {
     glEnd();
   }
 };
-BlackHole SagaA(vec2(engine.width / 2.0, 0.0), 8.54e36);
+BlackHole SagaA(vec2(0.0, 0.0), 8.54e36);
 
 struct Ray {
+  // cartesian coordinates //
   double x;
   double y;
+  // polar coordinates
+  double r;
+  double phi;
   vec2 dir;
   vector<vec2> trail;
 
-  Ray(vec2(pos), vec2(dir)) : x(pos.x), y(pos.y), dir(dir) {}
+  Ray(vec2(pos), vec2(dir)) : x(pos.x), y(pos.y), dir(dir) {
+    r = hypot(x, y);
+    phi = atan(y, x);
+  };
   void draw() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -113,9 +120,13 @@ struct Ray {
     glEnd();
   }
 
-  void step() {
-    x += dir.x * c;
-    y += dir.y * c;
+  void step(double r_s) {
+    r = hypot(x, y);
+    if (r < r_s)
+      return; // inside blackhole, ray cannot escape
+
+    x += dir.x * c * 2.0;
+    y += dir.y * c * 2.0;
     trail.push_back({x, y});
   }
 };
@@ -132,7 +143,7 @@ int main() {
 
     for (auto &ray : rays) {
       ray.draw();
-      ray.step();
+      ray.step(SagaA.r_s);
     }
 
     glfwSwapBuffers(engine.window);

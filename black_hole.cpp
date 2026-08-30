@@ -92,15 +92,28 @@ struct Ray {
   // cartesian coordinates //
   double x;
   double y;
+
   // polar coordinates
   double r;
   double phi;
+
+  // velocity for polar position //
+  double dr;
+  double dphi;
+  double d2r;
+  double d2phi;
   vec2 dir;
   vector<vec2> trail;
 
   Ray(vec2(pos), vec2(dir)) : x(pos.x), y(pos.y), dir(dir) {
     r = hypot(x, y);
-    phi = atan(y, x);
+    phi = atan2(y, x);
+
+    dr = c * cos(phi) + dir.y * sin(phi);          // m/s
+    dphi = (-c * sin(phi) + dir.y * cos(phi)) / r; // rad/s
+    d2r = 0.0;
+    d2phi = 0.0;
+    trail.push_back({x, y});
   };
   void draw() {
     glEnable(GL_BLEND);
@@ -120,17 +133,34 @@ struct Ray {
     glEnd();
   }
 
-  void step(double r_s) {
-    r = hypot(x, y);
+  void step(double r_s, double d_lambda) {
     if (r < r_s)
-      return; // inside blackhole, ray cannot escape
+      return; // inside blackhole, ray cannot escape //
+    dr += d2r * d_lambda;
+    dphi += d2phi * d_lambda;
+    r += dr * d_lambda;
+    phi += dphi * d_lambda;
 
-    x += dir.x * c * 2.0;
-    y += dir.y * c * 2.0;
+    x = r * cos(phi);
+    y = r * sin(phi);
     trail.push_back({x, y});
   }
 };
 vector<Ray> rays;
+
+void geodesic(Ray &ray, double r_s) {
+  double r = ray.r;
+  double phi = ray.phi;
+  double dr = ray.dr;
+  double dphi = ray.dphi;
+
+  ray.d2r =
+      r * dphi * dphi -
+      (c * c * r_s) /
+          (2.0 * r * r); // Radial acceleration: centrifugal force + gravity //
+  ray.d2phi = -2.0 * dr * dphi /
+              r; // Angular acceleration: conservation of angular momentum //
+}
 
 int main() {
   for (float y = -engine.height; y < engine.height; y += 1.5e10) {
@@ -142,8 +172,9 @@ int main() {
     SagaA.draw();
 
     for (auto &ray : rays) {
+      geodesic(ray, SagaA.r_s);
       ray.draw();
-      ray.step(SagaA.r_s);
+      ray.step(SagaA.r_s, 1);
     }
 
     glfwSwapBuffers(engine.window);

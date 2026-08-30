@@ -105,7 +105,7 @@ struct Ray {
   vec2 dir;
   vector<vec2> trail;
 
-  Ray(vec2(pos), vec2(dir)) : x(pos.x), y(pos.y), dir(dir) {
+  Ray(vec2 pos, vec2 dir) : x(pos.x), y(pos.y), dir(dir) {
     r = hypot(x, y);
     phi = atan2(y, x);
 
@@ -114,7 +114,7 @@ struct Ray {
     d2r = 0.0;
     d2phi = 0.0;
     trail.push_back({x, y});
-  };
+  }
   void draw() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -163,10 +163,9 @@ void geodesic(Ray &ray, double r_s) {
 }
 
 int main() {
-  for (float y = -engine.height; y < engine.height; y += 1.5e10) {
+  for (float y = -engine.height; y <= engine.height; y += 1.e10) {
     rays.push_back(Ray(vec2(-engine.width, y), vec2(1.0, 0.0)));
   }
-  rays.push_back(Ray(vec2(-engine.width, 0.0), vec2(1.0, 0.0)));
   while (!glfwWindowShouldClose(engine.window)) {
     engine.run();
     SagaA.draw();

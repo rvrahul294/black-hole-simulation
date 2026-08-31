@@ -11,9 +11,8 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
-#include <iomanip>
-#include <sstream>
 
+#include <sstream>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -202,9 +201,10 @@ struct Engine {
     }
     cout << "OpenGL " << glGetString(GL_VERSION) << "\n";
     this->shaderProgram = CreateShaderProgram();
-    gridShaderProgram = CreateShaderProgram("grid.vert", "grid.frag");
 
-    computeProgram = CreateComputeProgram("geodesic.comp");
+    gridShaderProgram =
+        CreateShaderProgram("../shaders/grid.vert", "../shaders/grid.frag");
+    computeProgram = CreateComputeProgram("../shaders/geodesic.comp");
     glGenBuffers(1, &cameraUBO);
     glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
     glBufferData(GL_UNIFORM_BUFFER, 128, nullptr,
@@ -243,8 +243,8 @@ struct Engine {
 
     for (int z = 0; z <= gridSize; ++z) {
       for (int x = 0; x <= gridSize; ++x) {
-        float worldX = (x - gridSize / 2) * spacing;
-        float worldZ = (z - gridSize / 2) * spacing;
+        float worldX = (x - gridSize / 2.0f) * spacing;
+        float worldZ = (z - gridSize / 2.0f) * spacing;
 
         float y = 0.0f;
 

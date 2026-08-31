@@ -1,6 +1,5 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
-#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -8,10 +7,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <iomanip>
 #include <iostream>
-#include <numbers>
-#include <sstream>
 #include <vector>
 
 #ifndef M_PI

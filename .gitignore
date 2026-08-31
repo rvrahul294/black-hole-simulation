@@ -1,3 +1,23 @@
-*.exe
+# Build output
 build/
+
+# Compiled executables
+*.exe
+
+# VS Code local configuration
 .vscode/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# C/C++ compiler output
+*.o
+*.obj
+*.a
+*.lib
+
+# Temporary Code Runner file
+tempCodeRunnerFile.cpp

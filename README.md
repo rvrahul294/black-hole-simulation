@@ -308,3 +308,17 @@ CMake automatically copies the `shaders/` directory and `glew32.dll` (on Windows
 g++ src/geodesic_cpu.cpp -o build/geodesic_cpu -lglew32 -lglfw3 -lopengl32 -lgdi32 -fopenmp
 ./build/geodesic_cpu
 ```
+
+## Acknowledgment
+
+This project is based on and developed from the original
+[black_hole](https://github.com/kavan010/black_hole) project by kavan010.
+
+The original project provided the foundation for the black-hole simulation,
+including the core C++/OpenGL implementation and geodesic ray-tracing
+approach.
+
+This repository represents my own study and adaptation of the project,
+including code organization, documentation, CMake/build improvements,
+runtime asset handling, comments, screenshots, and other modifications
+made while studying and extending the original implementation.

@@ -131,6 +131,53 @@ $$\vec{F}_{12} = G \frac{m_1 m_2}{r^2} \hat{r}_{12}$$
 
 ---
 
+## Physics & Mathematical Model
+
+This simulation combines general relativity for photon trajectories with classical mechanics for orbital motion.
+
+### 1. Schwarzschild Metric
+The simulation assumes a static, spherically symmetric, non-rotating black hole described by the **Schwarzschild metric** in spherical coordinates $(t, r, \theta, \phi)$:
+
+$$ds^2 = -\left(1 - \frac{r_s}{r}\right)c^2 dt^2 + \frac{dr^2}{1 - \frac{r_s}{r}} + r^2(d\theta^2 + \sin^2\theta d\phi^2)$$
+
+This metric describes how spacetime geometry is curved by a central mass.
+
+### 2. Schwarzschild Radius
+The characteristic length scale of the black hole is the **Schwarzschild radius** $r_s$:
+
+$$r_s = \frac{2GM}{c^2}$$
+
+In the simulation, $r_s$ defines the spherical boundary of the **event horizon**—any light ray reaching $r \le r_s$ is captured and terminated.
+
+### 3. Geodesic Equation
+Light travels along **null geodesics** ($ds^2 = 0$) through curved spacetime, governed by the general-relativistic geodesic equation parameterized by an affine parameter $\lambda$:
+
+$$\frac{d^2 x^\mu}{d\lambda^2} + \Gamma^\mu_{\alpha\beta}\frac{dx^\alpha}{d\lambda}\frac{dx^\beta}{d\lambda} = 0$$
+
+- Light follows null geodesics representing the straightest possible paths in curved spacetime.
+- $\Gamma^\mu_{\alpha\beta}$ represents the **Christoffel symbols**, which encode how the curved coordinate geometry affects the trajectory.
+- The simulation does not numerically calculate the full tensor equation directly at runtime; the relevant equations are analytically expanded into spherical-coordinate geodesic equations implemented in the CPU prototype and GPU compute shader.
+
+### 4. Coordinate Geodesic Equations
+The expanded second-order differential equations for $r$, $\theta$, and $\phi$ are the equations implemented in `shaders/geodesic.comp` and `src/geodesic_cpu.cpp` (documented in detail in the [Geodesic Ray Tracing](#geodesic-ray-tracing) section above).
+
+### 5. Numerical Integration
+Because these non-linear differential equations do not have a simple closed-form solution for arbitrary ray paths, the simulation numerically advances each ray step-by-step using the **Runge-Kutta 4th Order (RK4)** method. The GPU compute shader integrates the 6-element state vector:
+
+$$\left[r,\, \theta,\, \phi,\, \frac{dr}{d\lambda},\, \frac{d\theta}{d\lambda},\, \frac{d\phi}{d\lambda}\right]$$
+
+### 6. Classical N-Body Dynamics
+The project distinctly separates two physics models:
+- **Light propagation**: General-relativistic geodesic equations through curved spacetime.
+- **Celestial-body motion**: Classical Newtonian gravity for orbiting masses:
+
+$$\vec{F}_{12} = G \frac{m_1 m_2}{r^2} \hat{r}_{12}$$
+
+### 7. Visualization Note
+The warped 3D grid uses **Flamm's paraboloid** as an intuitive visualization of spatial curvature and gravitational potential wells. As noted in the [Spacetime Grid Representation](#spacetime-grid-representation) section, this is an embedding diagram representing spatial geometry and is not a complete four-dimensional spacetime representation.
+
+---
+
 ## CPU vs GPU Geodesics
 
 The repository contains two distinct implementations of 3D geodesic ray tracing:

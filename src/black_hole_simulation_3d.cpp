@@ -304,10 +304,10 @@ struct Engine {
 
     // 2) Shader for rendering the warped 3D spacetime grid lines
     gridShaderProgram =
-        CreateShaderProgram("../shaders/grid.vert", "../shaders/grid.frag");
+        CreateShaderProgram("shaders/grid.vert", "shaders/grid.frag");
 
     // 3) Compute shader for GPU-accelerated ray tracing and light bending
-    computeProgram = CreateComputeProgram("../shaders/geodesic.comp");
+    computeProgram = CreateComputeProgram("shaders/geodesic.comp");
 
     // Allocate camera UBO buffer (~128 bytes) and link to binding point 1
     glGenBuffers(1, &cameraUBO);
@@ -508,10 +508,25 @@ struct Engine {
     return shaderProgram;
   };
 
+  // Helper to find a shader file in the working directory or parent directory (for Code Runner compatibility)
+  static string resolveShaderPath(const char *path) {
+    ifstream in(path);
+    if (in.is_open()) {
+      return string(path);
+    }
+    string fallback = string("../") + path;
+    ifstream inFallback(fallback);
+    if (inFallback.is_open()) {
+      return fallback;
+    }
+    return string(path);
+  }
+
   // Helper to load, compile, and link vertex and fragment shaders from external files
   GLuint CreateShaderProgram(const char *vertPath, const char *fragPath) {
     auto loadShader = [](const char *path, GLenum type) -> GLuint {
-      std::ifstream in(path);
+      std::string resolved = resolveShaderPath(path);
+      std::ifstream in(resolved);
       if (!in.is_open()) {
         std::cerr << "Failed to open shader: " << path << "\n";
         exit(EXIT_FAILURE);
@@ -567,7 +582,8 @@ struct Engine {
   // Compiles and links the GLSL Compute Shader from file
   GLuint CreateComputeProgram(const char *path) {
     // 1) read GLSL source
-    std::ifstream in(path);
+    std::string resolved = resolveShaderPath(path);
+    std::ifstream in(resolved);
     if (!in.is_open()) {
       std::cerr << "Failed to open compute shader: " << path << "\n";
       exit(EXIT_FAILURE);

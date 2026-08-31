@@ -1,3 +1,35 @@
+// ============================================================================
+// CPU-Based 3D Black Hole Geodesic Ray Tracer (Reference Prototype)
+// ============================================================================
+//
+// What this file is:
+// This is a standalone CPU implementation of 3D null-geodesic ray tracing
+// around a Schwarzschild black hole (Sagittarius A*).
+//
+// Why this CPU version exists:
+// Calculating curved light paths in general relativity requires numerical
+// integration of nonlinear differential equations. This file served as the
+// CPU reference prototype used to verify the geodesic physics and math before
+// implementing the high-performance GPU compute shader (geodesic.comp) used
+// in the main 3D simulation.
+//
+// How it works:
+// 1. Camera & Rays: For every pixel on screen, a light ray is cast from the
+//    camera position into the scene.
+// 2. Geodesic Equations: Light follows "geodesics" (the straightest possible
+//    paths through curved spacetime). In the presence of a black hole, spacetime
+//    is curved, causing light rays to bend.
+// 3. RK4 Integration: The Runge-Kutta 4th Order (RK4) method steps the ray
+//    forward in small increments, calculating how gravity bends its trajectory.
+// 4. Multithreading (OpenMP): CPU ray tracing is computationally heavy, so
+//    OpenMP distributes pixel ray tracing across all available CPU cores.
+// 5. Texture Display: The CPU pixel buffer is uploaded to an OpenGL texture
+//    and rendered onto a fullscreen quad.
+//
+// Note: This is an independent educational/reference program and is not part
+// of the main CMake 3D simulation executable.
+// ============================================================================
+
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <chrono>
@@ -17,12 +49,29 @@
 using Clock = std::chrono::high_resolution_clock;
 using namespace std;
 using namespace glm;
+
+// ----------------------------------------------------------------------------
+// Physical Constants (SI Units)
+// ----------------------------------------------------------------------------
+// Universal gravitational constant G (m^3 / kg / s^2)
 const double G = 6.674e-11;
+
+// Speed of light in vacuum c (meters per second)
 const double c = 299792458.0;
+
 int frameCount = 0;
 double lastPrintTime = 0.0;
+
+// Toggle between straight-line ray tracing and curved geodesic ray tracing (press 'G')
 bool useGeodesics = false;
 
+// ----------------------------------------------------------------------------
+// Orbital Camera
+// ----------------------------------------------------------------------------
+// Spherical camera orbiting around the origin (0, 0, 0) where the black hole sits.
+// - azimuth: horizontal angle around the Y-axis
+// - elevation: vertical angle from the top pole
+// - radius: distance from target in meters
 struct Camera {
   vec3 pos;
   vec3 target;
@@ -34,7 +83,7 @@ struct Camera {
   bool panning = false;
   double lastX = 0, lastY = 0;
 
-  // adjustable speed
+  // Camera movement speeds
   float orbitSpeed = 0.080f;
   float panSpeed = 0.001f;
   float zoomSpeed = 1.08f;
@@ -45,12 +94,14 @@ struct Camera {
     updateVectors();
   }
 
+  // Converts spherical coordinates (radius, elevation, azimuth) into Cartesian 3D position (x, y, z)
   void updateVectors() {
     pos.x = target.x + radius * sin(elevation) * cos(azimuth);
     pos.y = target.y + radius * cos(elevation);
     pos.z = target.z + radius * sin(elevation) * sin(azimuth);
   }
 
+  // Handles mouse drag for orbiting and panning
   void processMouse(GLFWwindow *window, double xpos, double ypos) {
     float dx = float(xpos - lastX);
     float dy = float(ypos - lastY);
@@ -70,6 +121,7 @@ struct Camera {
     lastY = ypos;
   }
 
+  // Handles mouse scroll for zooming
   void processScroll(double yoffset) {
     // zoom
     if (yoffset >= 0) {
@@ -111,6 +163,10 @@ struct Camera {
 };
 Camera camera;
 
+// ----------------------------------------------------------------------------
+// OpenGL Display Engine
+// ----------------------------------------------------------------------------
+// Manages window creation, texture generation, and fullscreen quad rendering.
 struct Engine {
   GLFWwindow *window;
   GLuint quadVAO;
@@ -152,6 +208,7 @@ struct Engine {
     this->quadVAO = result[0];
     this->texture = result[1];
   }
+  // Compiles basic shader program to display the CPU ray-traced texture on a 2D quad
   GLuint CreateShaderProgram() {
     const char *vertexShaderSource = R"(
     #version 330 core
@@ -192,6 +249,7 @@ struct Engine {
 
     return shaderProgram;
   };
+  // Creates VAO/VBO for a fullscreen rectangular quad (two triangles)
   vector<GLuint> QuadVAO() {
     float quadVertices[] = {
         // positions   // texCoords
@@ -227,6 +285,7 @@ struct Engine {
     vector<GLuint> VAOtexture = {VAO, texture};
     return VAOtexture;
   }
+  // Uploads ray-traced CPU pixel data to GPU texture and renders to screen
   void renderScene(const vector<unsigned char> &pixels, int texWidth,
                    int texHeight) {
     // update texture w/ ray-tracing results
@@ -249,6 +308,7 @@ struct Engine {
     glfwPollEvents();
   };
 
+  // Keyboard callback: press 'G' to toggle geodesic mode on/off
   static void keyCallback(GLFWwindow *window, int key, int scancode, int action,
                           int mods) {
     if (action == GLFW_PRESS) {
@@ -280,6 +340,10 @@ struct Engine {
 };
 Engine engine;
 
+// ----------------------------------------------------------------------------
+// Black Hole Representation
+// ----------------------------------------------------------------------------
+// Represents a non-rotating (Schwarzschild) black hole using mass and position.
 struct BlackHole {
   vec3 position;
   double mass;
@@ -287,8 +351,11 @@ struct BlackHole {
   double r_s; /*Event horizon*/
 
   BlackHole(vec3 pos, float m) : position(pos), mass(m) {
+    // Schwarzschild radius (event horizon): distance where escape velocity equals speed of light
+    // r_s = 2 * G * M / c^2
     r_s = 2.0 * G * mass / (c * c);
   }
+  // Checks if a 3D position is inside the event horizon
   bool Intercept(float px, float py, float pz) const {
     float dx = px - position.x;
     float dy = py - position.y;
@@ -297,6 +364,7 @@ struct BlackHole {
     return dist2 < r_s * r_s;
   }
 
+  // 2D disk preview drawing
   void draw() {
     glColor3f(1.0, 0.0, 0.0);
     glBegin(GL_TRIANGLE_FAN);
@@ -310,10 +378,17 @@ struct BlackHole {
     glEnd();
   }
 };
+// Sagittarius A* supermassive black hole (~8.54 x 10^36 kg)
 BlackHole SagaA(vec3(0.0, 0.0, 0.0), 8.54e36);
 
 struct Ray;
 void rk4Step(Ray &ray, double d_lambda, double rs);
+
+// ----------------------------------------------------------------------------
+// Light Ray Representation
+// ----------------------------------------------------------------------------
+// Stores position and velocity in spherical coordinates (r, theta, phi)
+// and Cartesian coordinates (x, y, z), along with conserved quantities.
 struct Ray {
   // cartesian coordinates //
   double x;
@@ -328,7 +403,7 @@ struct Ray {
   double dr;
   double dphi;
   double dtheta;
-  double E, L;
+  double E, L; // Conserved Energy and Angular Momentum
   Ray(vec3 pos, vec3 dir) : x(pos.x), y(pos.y), z(pos.z) {
     // Step 1: get spherical coords (r, theta, phi)
     r = sqrt(x * x + y * y + z * z);
@@ -353,6 +428,7 @@ struct Ray {
                         r * r * sin(theta) * sin(theta) * dphi * dphi);
     E = f * dt_dλ;
   }
+  // Steps the ray forward in affine parameter space using RK4
   void step(double dλ, double rs) {
     if (r <= rs)
       return;
@@ -365,16 +441,22 @@ struct Ray {
 };
 vector<Ray> rays;
 
+// ----------------------------------------------------------------------------
+// CPU Ray Tracing Pipeline
+// ----------------------------------------------------------------------------
+// Casts light rays through each screen pixel. Uses OpenMP to distribute the
+// workload across multiple CPU cores in parallel.
 void raytrace(vector<unsigned char> &pixels, int W, int H) {
   pixels.resize(W * H * 3);
 
-  // build camera basis
+  // build camera basis (forward, right, up)
   vec3 forward = normalize(camera.target - camera.pos);
   vec3 right = normalize(cross(forward, vec3(0, 1, 0)));
   vec3 up = cross(right, forward);
   float aspect = float(W) / float(H);
   float tanHalfFov = tan(radians(camera.fovY) * 0.5f);
 
+  // OpenMP: parallelize pixel rendering across CPU threads
 #pragma omp parallel for schedule(dynamic, 4)
   for (int y = 0; y < H; ++y) {
     for (int x = 0; x < W; ++x) {
@@ -393,6 +475,7 @@ void raytrace(vector<unsigned char> &pixels, int W, int H) {
       // 2) march the ray forward in λ
       vec3 color(0.0f);
       if (!useGeodesics) {
+        // Simple Euclidean mode: straight-line ray-sphere intersection check
         double b = 2.0 * dot(camera.pos, dir);
         double c0 = dot(camera.pos, camera.pos) - SagaA.r_s * SagaA.r_s;
         double disc = b * b - 4.0 * c0;
@@ -403,9 +486,10 @@ void raytrace(vector<unsigned char> &pixels, int W, int H) {
             color = vec3(1.0f, 0.0f, 0.0f);
         }
       } else {
-        // full null‐geodesic march
+        // Full null-geodesic marching in curved spacetime
         Ray ray(camera.pos, dir);
         for (int i = 0; i < MAX_STEPS; ++i) {
+          // Check if ray fell into the event horizon
           if (SagaA.Intercept(ray.x, ray.y, ray.z)) {
             color = vec3(1.0f, 0.0f, 0.0f);
             break;
@@ -426,6 +510,12 @@ void raytrace(vector<unsigned char> &pixels, int W, int H) {
   }
 }
 
+// ----------------------------------------------------------------------------
+// Geodesic Differential Equations (Right-Hand Side)
+// ----------------------------------------------------------------------------
+// Evaluates the derivatives for null geodesics in Schwarzschild spacetime.
+// State vector: y = [r, theta, phi, dr/dlambda, dtheta/dlambda, dphi/dlambda]
+// Computes: dy/dlambda = [dr, dtheta, dphi, d^2r, d^2theta, d^2phi]
 void geodesicRHS(const Ray &ray, double rhs[6], double rs) {
   double r = ray.r;
   double theta = ray.theta;
@@ -437,12 +527,12 @@ void geodesicRHS(const Ray &ray, double rhs[6], double rs) {
   double f = 1.0 - rs / r;
   double dt_dlambda = E / f;
 
-  // First derivatives
+  // First derivatives (velocities)
   rhs[0] = dr;
   rhs[1] = dtheta;
   rhs[2] = dphi;
 
-  // Second derivatives (from 3D Schwarzschild null geodesics):
+  // Second derivatives (accelerations from 3D Schwarzschild null geodesic equations):
   rhs[3] = -(rs / (2 * r * r)) * f * dt_dlambda * dt_dlambda +
            (rs / (2 * r * r * f)) * dr * dr +
            r * (dtheta * dtheta + sin(theta) * sin(theta) * dphi * dphi);
@@ -453,6 +543,7 @@ void geodesicRHS(const Ray &ray, double rhs[6], double rs) {
       -(2.0 / r) * dr * dphi - 2.0 * cos(theta) / sin(theta) * dtheta * dphi;
 }
 
+// Helper to calculate intermediate RK4 state: out = y + factor * k
 void addState(const double y[6], const double k[6], double factor,
               double out[6]) {
   for (int i = 0; i < 6; i++) {
@@ -460,16 +551,22 @@ void addState(const double y[6], const double k[6], double factor,
   }
 }
 
+// ----------------------------------------------------------------------------
+// Runge-Kutta 4th Order (RK4) Numerical Integrator
+// ----------------------------------------------------------------------------
+// Integrates the 6 geodesic equations across step size d_lambda.
+// RK4 computes four slope estimates (k1, k2, k3, k4) to achieve high numerical
+// accuracy and prevent integration drift near the strong gravity of the black hole.
 void rk4Step(Ray &ray, double d_lambda, double rs) {
   double y0[6] = {ray.r, ray.theta, ray.phi, ray.dr, ray.dtheta, ray.dphi};
   double k1[6], k2[6], k3[6], k4[6], temp[6];
 
   if (ray.r < rs)
     return;
-  // k1
+  // k1: initial slope
   geodesicRHS(ray, k1, rs);
 
-  // k2
+  // k2: slope at midpoint using k1
   addState(y0, k1, d_lambda / 2.0, temp);
   Ray r2 = ray;
   r2.r = temp[0];
@@ -481,7 +578,7 @@ void rk4Step(Ray &ray, double d_lambda, double rs) {
 
   geodesicRHS(r2, k2, rs);
 
-  // k3
+  // k3: second slope at midpoint using k2
   addState(y0, k2, d_lambda / 2.0, temp);
   Ray r3 = ray;
   r3.r = temp[0];
@@ -493,7 +590,7 @@ void rk4Step(Ray &ray, double d_lambda, double rs) {
 
   geodesicRHS(r3, k3, rs);
 
-  // k4
+  // k4: slope at end of step using k3
   addState(y0, k3, d_lambda, temp);
   Ray r4 = ray;
   r4.r = temp[0];
@@ -505,7 +602,7 @@ void rk4Step(Ray &ray, double d_lambda, double rs) {
 
   geodesicRHS(r4, k4, rs);
 
-  // final step
+  // Combine weighted slopes to take the final RK4 step
   ray.r += (d_lambda / 6.0) * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]);
   ray.theta += (d_lambda / 6.0) * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]);
   ray.phi += (d_lambda / 6.0) * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2]);
@@ -514,6 +611,9 @@ void rk4Step(Ray &ray, double d_lambda, double rs) {
   ray.dphi += (d_lambda / 6.0) * (k1[5] + 2 * k2[5] + 2 * k3[5] + k4[5]);
 }
 
+// ----------------------------------------------------------------------------
+// Window & Input Callbacks
+// ----------------------------------------------------------------------------
 void setupCameraCallbacks(GLFWwindow *window) {
   glfwSetWindowUserPointer(window, &camera);
   glfwSetMouseButtonCallback(window, Camera::mouseCallback);
@@ -522,6 +622,9 @@ void setupCameraCallbacks(GLFWwindow *window) {
   glfwSetKeyCallback(window, Engine::keyCallback);
 }
 
+// ----------------------------------------------------------------------------
+// Main Loop
+// ----------------------------------------------------------------------------
 int main() {
   setupCameraCallbacks(engine.window);
   vector<unsigned char> pixels(engine.WIDTH * engine.HEIGHT * 3);
@@ -530,6 +633,7 @@ int main() {
   lastPrintTime = std::chrono::duration<double>(t0.time_since_epoch()).count();
 
   while (!glfwWindowShouldClose(engine.window)) {
+    // 1) Ray trace on CPU and draw to OpenGL quad
     raytrace(pixels, engine.WIDTH, engine.HEIGHT);
     engine.renderScene(pixels, engine.WIDTH, engine.HEIGHT);
 

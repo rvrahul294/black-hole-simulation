@@ -1,142 +1,193 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
-#include <algorithm>
-#include <chrono>
-#include <cmath>
-#include <cstdlib>
-#include <cstring>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <iomanip>
 #include <iostream>
-#include <numbers>
-#include <sstream>
 #include <vector>
+
+#define _USE_MATH_DEFINES
+#include <chrono>
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
-#endif
 
-using Clock = std::chrono::high_resolution_clock;
-using namespace std;
+#endif
 using namespace glm;
-const double G = 6.674e-11;
-const double c = 299792458.0;
-int frameCount = 0;
+using namespace std;
+using Clock = std::chrono::high_resolution_clock;
+
+// VARS
 double lastPrintTime = 0.0;
-bool useGeodesics = false;
+int framesCount = 0;
+double c = 299792458.0;
+double G = 6.67430e-11;
+struct Ray;
+bool Gravity = false;
 
 struct Camera {
-  vec3 pos;
-  vec3 target;
-  float fovY;
-  float azimuth, elevation, radius;
-  float minRadius = 1e12f;
-  float maxRadius = 1e20f;
+  // Center the camera orbit on the black hole at (0, 0, 0)
+  vec3 target = vec3(0.0f, 0.0f, 0.0f); // Always look at the black hole center
+  float radius = 6.34194e10f;
+  float minRadius = 1e10f, maxRadius = 1e12f;
+
+  float azimuth = 0.0f;
+  float elevation = M_PI / 2.0f;
+
+  float orbitSpeed = 0.01f;
+  float panSpeed = 0.01f;
+  double zoomSpeed = 25e9f;
+
   bool dragging = false;
   bool panning = false;
-  double lastX = 0, lastY = 0;
+  bool moving = false; // For compute shader optimization
+  double lastX = 0.0, lastY = 0.0;
 
-  // adjustable speed
-  float orbitSpeed = 0.080f;
-  float panSpeed = 0.001f;
-  float zoomSpeed = 1.08f;
-
-  Camera()
-      : azimuth(0), elevation(M_PI / 2.0), radius(6.34194e10), fovY(60.0f) {
-    target = vec3(0, 0, 0);
-    updateVectors();
+  // Calculate camera position in world space
+  vec3 position() const {
+    float clampedElevation = glm::clamp(elevation, 0.01f, float(M_PI) - 0.01f);
+    // Orbit around (0,0,0) always
+    return vec3(radius * sin(clampedElevation) * cos(azimuth),
+                radius * cos(clampedElevation),
+                radius * sin(clampedElevation) * sin(azimuth));
+  }
+  void update() {
+    // Always keep target at black hole center
+    target = vec3(0.0f, 0.0f, 0.0f);
+    if (dragging | panning) {
+      moving = true;
+    } else {
+      moving = false;
+    }
   }
 
-  void updateVectors() {
-    pos.x = target.x + radius * sin(elevation) * cos(azimuth);
-    pos.y = target.y + radius * cos(elevation);
-    pos.z = target.z + radius * sin(elevation) * sin(azimuth);
-  }
+  void processMouseMove(double x, double y) {
+    float dx = float(x - lastX);
+    float dy = float(y - lastY);
 
-  void processMouse(GLFWwindow *window, double xpos, double ypos) {
-    float dx = float(xpos - lastX);
-    float dy = float(ypos - lastY);
-
-    if (dragging && !panning) {
-      azimuth -= dx * orbitSpeed;
+    if (dragging && panning) {
+      // Pan: Shift + Left or Middle Mouse
+      // Disable panning to keep camera centered on black hole
+    } else if (dragging && !panning) {
+      // Orbit: Left mouse only
+      azimuth += dx * orbitSpeed;
       elevation -= dy * orbitSpeed;
       elevation = glm::clamp(elevation, 0.01f, float(M_PI) - 0.01f);
-    } else if (panning) {
-      vec3 forward = normalize(target - pos);
-      vec3 right = normalize(cross(forward, vec3(0, 1, 0)));
-      vec3 up = normalize(cross(right, forward));
-      target += -right * dx * panSpeed * radius + up * dy * panSpeed * radius;
     }
-    updateVectors();
-    lastX = xpos;
-    lastY = ypos;
-  }
 
-  void processScroll(double yoffset) {
-    // zoom
-    if (yoffset >= 0) {
-      radius /= pow(zoomSpeed, yoffset);
-    } else {
-      radius *= pow(zoomSpeed, -yoffset);
-    }
-    radius = glm::clamp(radius, minRadius, maxRadius);
-    updateVectors();
+    lastX = x;
+    lastY = y;
+    update();
   }
-  static void mouseCallback(GLFWwindow *window, int button, int action,
-                            int mods) {
-    Camera *camera = (Camera *)glfwGetWindowUserPointer(window);
-    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+  void processMouseButton(int button, int action, int mods, GLFWwindow *win) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT ||
+        button == GLFW_MOUSE_BUTTON_MIDDLE) {
       if (action == GLFW_PRESS) {
-        camera->dragging = true;
-        camera->panning = (mods & GLFW_MOD_SHIFT);
-        double x, y;
-        glfwGetCursorPos(window, &x, &y);
-        camera->lastX = x;
-        camera->lastY = y;
+        dragging = true;
+        // Disable panning so camera always orbits center
+        panning = false;
+        glfwGetCursorPos(win, &lastX, &lastY);
       } else if (action == GLFW_RELEASE) {
-        camera->dragging = false;
-        camera->panning = false;
+        dragging = false;
+        panning = false;
+      }
+    }
+    if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+      if (action == GLFW_PRESS) {
+        Gravity = true;
+      } else if (action == GLFW_RELEASE) {
+        Gravity = false;
       }
     }
   }
-
-  static void cursorPosCallback(GLFWwindow *window, double xpos, double ypos) {
-    Camera *camera = (Camera *)glfwGetWindowUserPointer(window);
-    camera->processMouse(window, xpos, ypos);
+  void processScroll(double xoffset, double yoffset) {
+    radius -= yoffset * zoomSpeed;
+    radius = glm::clamp(radius, minRadius, maxRadius);
+    update();
   }
-
-  static void scrollCallback(GLFWwindow *window, double xoffset,
-                             double yoffset) {
-    Camera *camera = (Camera *)glfwGetWindowUserPointer(window);
-    camera->processScroll(yoffset);
+  void processKey(int key, int scancode, int action, int mods) {
+    if (action == GLFW_PRESS && key == GLFW_KEY_G) {
+      Gravity = !Gravity;
+      cout << "[INFO] Gravity turned " << (Gravity ? "ON" : "OFF") << endl;
+    }
   }
 };
 Camera camera;
 
+struct BlackHole {
+  vec3 position;
+  double mass;
+  double radius;
+  double r_s;
+
+  BlackHole(vec3 pos, float m) : position(pos), mass(m) {
+    r_s = 2.0 * G * mass / (c * c);
+  }
+  bool Intercept(float px, float py, float pz) const {
+    double dx = double(px) - double(position.x);
+    double dy = double(py) - double(position.y);
+    double dz = double(pz) - double(position.z);
+    double dist2 = dx * dx + dy * dy + dz * dz;
+    return dist2 < r_s * r_s;
+  }
+};
+BlackHole SagA(vec3(0.0f, 0.0f, 0.0f), 8.54e36); // Sagittarius A black hole
+struct ObjectData {
+  vec4 posRadius; // xyz = position, w = radius
+  vec4 color;     // rgb = color, a = unused
+  float mass;
+  vec3 velocity = vec3(0.0f, 0.0f, 0.0f); // Initial velocity
+};
+vector<ObjectData> objects = {
+    {vec4(4e11f, 0.0f, 0.0f, 4e10f), vec4(1, 1, 0, 1), 1.98892e30},
+    {vec4(0.0f, 0.0f, 4e11f, 4e10f), vec4(1, 0, 0, 1), 1.98892e30},
+    {vec4(0.0f, 0.0f, 0.0f, SagA.r_s), vec4(0, 0, 0, 1),
+     static_cast<float>(SagA.mass)},
+    //{ vec4(6e10f, 0.0f, 0.0f, 5e10f), vec4(0,1,0,1) }
+};
+
 struct Engine {
+  GLuint gridShaderProgram;
+  // -- Quad & Texture render -- //
   GLFWwindow *window;
   GLuint quadVAO;
   GLuint texture;
   GLuint shaderProgram;
-  int WIDTH = 800;
-  int HEIGHT = 600;
-  float width = 1e11;
-  float height = 7.5e10;
+  GLuint computeProgram = 0;
+  // -- UBOs -- //
+  GLuint cameraUBO = 0;
+  GLuint diskUBO = 0;
+  GLuint objectsUBO = 0;
+  // -- grid mess vars -- //
+  GLuint gridVAO = 0;
+  GLuint gridVBO = 0;
+  GLuint gridEBO = 0;
+  int gridIndexCount = 0;
+
+  int WIDTH = 800;               // Window width
+  int HEIGHT = 600;              // Window height
+  int COMPUTE_WIDTH = 200;       // Compute resolution width
+  int COMPUTE_HEIGHT = 150;      // Compute resolution height
+  float width = 100000000000.0f; // Width of the viewport in meters
+  float height = 75000000000.0f; // Height of the viewport in meters
 
   Engine() {
     if (!glfwInit()) {
-      cerr << "Failed to initialize GLFW" << endl;
+      cerr << "GLFW init failed\n";
       exit(EXIT_FAILURE);
     }
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    window = glfwCreateWindow(WIDTH, HEIGHT, "3D Black Hole sim", NULL, NULL);
-
+    window = glfwCreateWindow(WIDTH, HEIGHT, "Black Hole", nullptr, nullptr);
     if (!window) {
-      cerr << "Window failed to create" << endl;
+      cerr << "Failed to create GLFW window\n";
       glfwTerminate();
       exit(EXIT_FAILURE);
     }
@@ -151,14 +202,146 @@ struct Engine {
     }
     cout << "OpenGL " << glGetString(GL_VERSION) << "\n";
     this->shaderProgram = CreateShaderProgram();
+    gridShaderProgram = CreateShaderProgram("grid.vert", "grid.frag");
+
+    computeProgram = CreateComputeProgram("geodesic.comp");
+    glGenBuffers(1, &cameraUBO);
+    glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
+    glBufferData(GL_UNIFORM_BUFFER, 128, nullptr,
+                 GL_DYNAMIC_DRAW); // alloc ~128 bytes
+    glBindBufferBase(GL_UNIFORM_BUFFER, 1,
+                     cameraUBO); // binding = 1 matches shader
+
+    glGenBuffers(1, &diskUBO);
+    glBindBuffer(GL_UNIFORM_BUFFER, diskUBO);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 4, nullptr,
+                 GL_DYNAMIC_DRAW); // 3 values + 1 padding
+    glBindBufferBase(GL_UNIFORM_BUFFER, 2,
+                     diskUBO); // binding = 2 matches compute shader
+
+    glGenBuffers(1, &objectsUBO);
+    glBindBuffer(GL_UNIFORM_BUFFER, objectsUBO);
+    // allocate space for 16 objects:
+    // sizeof(int) + padding + 16×(vec4 posRadius + vec4 color)
+    GLsizeiptr objUBOSize = sizeof(int) + 3 * sizeof(float) +
+                            16 * (sizeof(vec4) + sizeof(vec4)) +
+                            16 * sizeof(float); // 16 floats for mass
+    glBufferData(GL_UNIFORM_BUFFER, objUBOSize, nullptr, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 3,
+                     objectsUBO); // binding = 3 matches shader
 
     auto result = QuadVAO();
     this->quadVAO = result[0];
     this->texture = result[1];
   }
+  void generateGrid(const vector<ObjectData> &objects) {
+    const int gridSize = 25;
+    const float spacing = 1e10f; // tweak this
+
+    vector<vec3> vertices;
+    vector<GLuint> indices;
+
+    for (int z = 0; z <= gridSize; ++z) {
+      for (int x = 0; x <= gridSize; ++x) {
+        float worldX = (x - gridSize / 2) * spacing;
+        float worldZ = (z - gridSize / 2) * spacing;
+
+        float y = 0.0f;
+
+        // ✅ Warp grid using Schwarzschild geometry
+        for (const auto &obj : objects) {
+          vec3 objPos = vec3(obj.posRadius);
+          double mass = obj.mass;
+          double radius = obj.posRadius.w;
+
+          double r_s = 2.0 * G * mass / (c * c);
+          double dx = worldX - objPos.x;
+          double dz = worldZ - objPos.z;
+          double dist = sqrt(dx * dx + dz * dz);
+
+          // prevent sqrt of negative or divide-by-zero (inside or at the black
+          // hole center)
+          if (dist > r_s) {
+            double deltaY = 2.0 * sqrt(r_s * (dist - r_s));
+            y += static_cast<float>(deltaY) - 3e10f;
+          } else {
+            // 🔴 For points inside or at r_s: make it dip down sharply
+            y += 2.0f * static_cast<float>(sqrt(r_s * r_s)) -
+                 3e10f; // or add a deep pit
+          }
+        }
+
+        vertices.emplace_back(worldX, y, worldZ);
+      }
+    }
+
+    // 🧩 Add indices for GL_LINE rendering
+    for (int z = 0; z < gridSize; ++z) {
+      for (int x = 0; x < gridSize; ++x) {
+        int i = z * (gridSize + 1) + x;
+        indices.push_back(i);
+        indices.push_back(i + 1);
+
+        indices.push_back(i);
+        indices.push_back(i + gridSize + 1);
+      }
+    }
+
+    // 🔌 Upload to GPU
+    if (gridVAO == 0)
+      glGenVertexArrays(1, &gridVAO);
+    if (gridVBO == 0)
+      glGenBuffers(1, &gridVBO);
+    if (gridEBO == 0)
+      glGenBuffers(1, &gridEBO);
+
+    glBindVertexArray(gridVAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(vec3),
+                 vertices.data(), GL_DYNAMIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gridEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint),
+                 indices.data(), GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(0); // location = 0
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vec3), (void *)0);
+
+    gridIndexCount = indices.size();
+
+    glBindVertexArray(0);
+  }
+  void drawGrid(const mat4 &viewProj) {
+    glUseProgram(gridShaderProgram);
+    glUniformMatrix4fv(glGetUniformLocation(gridShaderProgram, "viewProj"), 1,
+                       GL_FALSE, glm::value_ptr(viewProj));
+    glBindVertexArray(gridVAO);
+
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glDrawElements(GL_LINES, gridIndexCount, GL_UNSIGNED_INT, 0);
+
+    glBindVertexArray(0);
+    glEnable(GL_DEPTH_TEST);
+  }
+  void drawFullScreenQuad() {
+    glUseProgram(shaderProgram); // fragment + vertex shader
+    glBindVertexArray(quadVAO);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glUniform1i(glGetUniformLocation(shaderProgram, "screenTexture"), 0);
+
+    glDisable(GL_DEPTH_TEST);              // draw as background
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 6); // 2 triangles
+    glEnable(GL_DEPTH_TEST);
+  }
   GLuint CreateShaderProgram() {
     const char *vertexShaderSource = R"(
-    #version 330 core
+        #version 330 core
         layout (location = 0) in vec2 aPos;  // Changed to vec2
         layout (location = 1) in vec2 aTexCoord;
         out vec2 TexCoord;
@@ -168,7 +351,7 @@ struct Engine {
         })";
 
     const char *fragmentShaderSource = R"(
-    #version 330 core
+        #version 330 core
         in vec2 TexCoord;
         out vec4 FragColor;
         uniform sampler2D screenTexture;
@@ -196,12 +379,207 @@ struct Engine {
 
     return shaderProgram;
   };
+  GLuint CreateShaderProgram(const char *vertPath, const char *fragPath) {
+    auto loadShader = [](const char *path, GLenum type) -> GLuint {
+      std::ifstream in(path);
+      if (!in.is_open()) {
+        std::cerr << "Failed to open shader: " << path << "\n";
+        exit(EXIT_FAILURE);
+      }
+      std::stringstream ss;
+      ss << in.rdbuf();
+      std::string srcStr = ss.str();
+      const char *src = srcStr.c_str();
+
+      GLuint shader = glCreateShader(type);
+      glShaderSource(shader, 1, &src, nullptr);
+      glCompileShader(shader);
+
+      GLint success;
+      glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+      if (!success) {
+        GLint logLen;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &logLen);
+        std::vector<char> log(logLen);
+        glGetShaderInfoLog(shader, logLen, nullptr, log.data());
+        std::cerr << "Shader compile error (" << path << "):\n"
+                  << log.data() << "\n";
+        exit(EXIT_FAILURE);
+      }
+      return shader;
+    };
+
+    GLuint vertShader = loadShader(vertPath, GL_VERTEX_SHADER);
+    GLuint fragShader = loadShader(fragPath, GL_FRAGMENT_SHADER);
+
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vertShader);
+    glAttachShader(program, fragShader);
+    glLinkProgram(program);
+
+    GLint linkSuccess;
+    glGetProgramiv(program, GL_LINK_STATUS, &linkSuccess);
+    if (!linkSuccess) {
+      GLint logLen;
+      glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLen);
+      std::vector<char> log(logLen);
+      glGetProgramInfoLog(program, logLen, nullptr, log.data());
+      std::cerr << "Shader link error:\n" << log.data() << "\n";
+      exit(EXIT_FAILURE);
+    }
+
+    glDeleteShader(vertShader);
+    glDeleteShader(fragShader);
+
+    return program;
+  }
+  GLuint CreateComputeProgram(const char *path) {
+    // 1) read GLSL source
+    std::ifstream in(path);
+    if (!in.is_open()) {
+      std::cerr << "Failed to open compute shader: " << path << "\n";
+      exit(EXIT_FAILURE);
+    }
+    std::stringstream ss;
+    ss << in.rdbuf();
+    std::string srcStr = ss.str();
+    const char *src = srcStr.c_str();
+
+    // 2) compile
+    GLuint cs = glCreateShader(GL_COMPUTE_SHADER);
+    glShaderSource(cs, 1, &src, nullptr);
+    glCompileShader(cs);
+    GLint ok;
+    glGetShaderiv(cs, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+      GLint logLen;
+      glGetShaderiv(cs, GL_INFO_LOG_LENGTH, &logLen);
+      std::vector<char> log(logLen);
+      glGetShaderInfoLog(cs, logLen, nullptr, log.data());
+      std::cerr << "Compute shader compile error:\n" << log.data() << "\n";
+      exit(EXIT_FAILURE);
+    }
+
+    // 3) link
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, cs);
+    glLinkProgram(prog);
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+      GLint logLen;
+      glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &logLen);
+      std::vector<char> log(logLen);
+      glGetProgramInfoLog(prog, logLen, nullptr, log.data());
+      std::cerr << "Compute shader link error:\n" << log.data() << "\n";
+      exit(EXIT_FAILURE);
+    }
+
+    glDeleteShader(cs);
+    return prog;
+  }
+  void dispatchCompute(const Camera &cam) {
+    // determine target compute‐res
+    int cw = cam.moving ? COMPUTE_WIDTH : 200;
+    int ch = cam.moving ? COMPUTE_HEIGHT : 150;
+
+    // 1) reallocate the texture if needed
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,        // mip
+                 GL_RGBA8, // internal format
+                 cw,       // width
+                 ch,       // height
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    // 2) bind compute program & UBOs
+    glUseProgram(computeProgram);
+    uploadCameraUBO(cam);
+    uploadDiskUBO();
+    uploadObjectsUBO(objects);
+
+    // 3) bind it as image unit 0
+    glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+
+    // 4) dispatch grid
+    GLuint groupsX = (GLuint)std::ceil(cw / 16.0f);
+    GLuint groupsY = (GLuint)std::ceil(ch / 16.0f);
+    glDispatchCompute(groupsX, groupsY, 1);
+
+    // 5) sync
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+  }
+  void uploadCameraUBO(const Camera &cam) {
+    struct UBOData {
+      vec3 pos;
+      float _pad0;
+      vec3 right;
+      float _pad1;
+      vec3 up;
+      float _pad2;
+      vec3 forward;
+      float _pad3;
+      float tanHalfFov;
+      float aspect;
+      bool moving;
+      int _pad4;
+    } data;
+    vec3 fwd = normalize(cam.target - cam.position());
+    vec3 up = vec3(0, 1, 0); // y axis is up, so disk is in x-z plane
+    vec3 right = normalize(cross(fwd, up));
+    up = cross(right, fwd);
+
+    data.pos = cam.position();
+    data.right = right;
+    data.up = up;
+    data.forward = fwd;
+    data.tanHalfFov = tan(radians(60.0f * 0.5f));
+    data.aspect = float(WIDTH) / float(HEIGHT);
+    data.moving = cam.dragging || cam.panning;
+
+    glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(UBOData), &data);
+  }
+  void uploadObjectsUBO(const vector<ObjectData> &objs) {
+    struct UBOData {
+      int numObjects;
+      float _pad0, _pad1, _pad2; // <-- pad out to 16 bytes
+      vec4 posRadius[16];
+      vec4 color[16];
+      float mass[16];
+    } data;
+
+    size_t count = std::min(objs.size(), size_t(16));
+    data.numObjects = static_cast<int>(count);
+
+    for (size_t i = 0; i < count; ++i) {
+      data.posRadius[i] = objs[i].posRadius;
+      data.color[i] = objs[i].color;
+      data.mass[i] = objs[i].mass;
+    }
+
+    // Upload
+    glBindBuffer(GL_UNIFORM_BUFFER, objectsUBO);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(data), &data);
+  }
+  void uploadDiskUBO() {
+    // disk
+    float r1 = SagA.r_s * 2.2f; // inner radius just outside the event horizon
+    float r2 = SagA.r_s * 5.2f; // outer radius of the disk
+    float num = 2.0;            // number of rays
+    float thickness = 1e9f;     // padding for std140 alignment
+    float diskData[4] = {r1, r2, num, thickness};
+
+    glBindBuffer(GL_UNIFORM_BUFFER, diskUBO);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(diskData), diskData);
+  }
+
   vector<GLuint> QuadVAO() {
     float quadVertices[] = {
         // positions   // texCoords
         -1.0f, 1.0f,  0.0f, 1.0f, // top left
         -1.0f, -1.0f, 0.0f, 0.0f, // bottom left
         1.0f,  -1.0f, 1.0f, 0.0f, // bottom right
+
         -1.0f, 1.0f,  0.0f, 1.0f, // top left
         1.0f,  -1.0f, 1.0f, 0.0f, // bottom right
         1.0f,  1.0f,  1.0f, 1.0f  // top right
@@ -228,324 +606,125 @@ struct Engine {
     glBindTexture(GL_TEXTURE_2D, texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,        // mip
+                 GL_RGBA8, // internal format
+                 COMPUTE_WIDTH, COMPUTE_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
     vector<GLuint> VAOtexture = {VAO, texture};
     return VAOtexture;
   }
-  void renderScene(const vector<unsigned char> &pixels, int texWidth,
-                   int texHeight) {
-    // update texture w/ ray-tracing results
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texWidth, texHeight, 0, GL_RGB,
-                 GL_UNSIGNED_BYTE, pixels.data());
-
-    // clear screen and draw textured quad
+  void renderScene() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(shaderProgram);
-
-    GLint textureLocation =
-        glGetUniformLocation(shaderProgram, "screenTexture");
-    glUniform1i(textureLocation, 0);
-
     glBindVertexArray(quadVAO);
+    // make sure your fragment shader samples from texture unit 0:
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
     glDrawArrays(GL_TRIANGLES, 0, 6);
-
     glfwSwapBuffers(window);
     glfwPollEvents();
   };
-
-  static void keyCallback(GLFWwindow *window, int key, int scancode, int action,
-                          int mods) {
-    if (action == GLFW_PRESS) {
-      if (key == GLFW_KEY_G) {
-        useGeodesics = !useGeodesics;
-        cout << "Geodesics: " << (useGeodesics ? "ON\n" : "OFF\n");
-      }
-    }
-  }
-
-  void run() {
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    // Reset projection matrix
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-
-    double left = -width;
-    double right = width;
-    double bottom = -height;
-    double top = height;
-
-    glOrtho(left, right, bottom, top, -1, 1);
-
-    // Reset model matrix
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-  }
 };
 Engine engine;
-
-struct BlackHole {
-  vec3 position;
-  double mass;
-  double radius;
-  double r_s; /*Event horizon*/
-
-  BlackHole(vec3 pos, float m) : position(pos), mass(m) {
-    r_s = 2.0 * G * mass / (c * c);
-  }
-  bool Intercept(float px, float py, float pz) const {
-    float dx = px - position.x;
-    float dy = py - position.y;
-    float dz = pz - position.z;
-    float dist2 = dx * dx + dy * dy + dz * dz;
-    return dist2 < r_s * r_s;
-  }
-
-  void draw() {
-    glColor3f(1.0, 0.0, 0.0);
-    glBegin(GL_TRIANGLE_FAN);
-    glVertex2f(position.x, position.y);
-    for (int i = 0; i <= 100; i++) {
-      float angle = 2.0f * M_PI * i / 100;
-      float x = r_s * cos(angle) + position.x;
-      float y = r_s * sin(angle) + position.y;
-      glVertex2f(x, y);
-    }
-    glEnd();
-  }
-};
-BlackHole SagaA(vec3(0.0, 0.0, 0.0), 8.54e36);
-
-struct Ray;
-void rk4Step(Ray &ray, double d_lambda, double rs);
-struct Ray {
-  // cartesian coordinates //
-  double x;
-  double y;
-  double z;
-  // polar coordinates
-  double r;
-  double phi;
-  double theta;
-
-  // velocity for polar position //
-  double dr;
-  double dphi;
-  double dtheta;
-  double E, L;
-  Ray(vec3 pos, vec3 dir) : x(pos.x), y(pos.y), z(pos.z) {
-    // Step 1: get spherical coords (r, theta, phi)
-    r = sqrt(x * x + y * y + z * z);
-    theta = acos(z / r);
-    phi = atan2(y, x);
-
-    // Step 2: seed velocities (dr, dtheta, dphi)
-    // Convert direction to spherical basis
-    double dx = dir.x, dy = dir.y, dz = dir.z;
-    dr = sin(theta) * cos(phi) * dx + sin(theta) * sin(phi) * dy +
-         cos(theta) * dz;
-    dtheta = cos(theta) * cos(phi) * dx + cos(theta) * sin(phi) * dy -
-             sin(theta) * dz;
-    dtheta /= r;
-    dphi = -sin(phi) * dx + cos(phi) * dy;
-    dphi /= (r * sin(theta));
-
-    // Step 3: store conserved quantities
-    L = r * r * sin(theta) * dphi;
-    double f = 1.0 - SagaA.r_s / r;
-    double dt_dλ = sqrt((dr * dr) / f + r * r * dtheta * dtheta +
-                        r * r * sin(theta) * sin(theta) * dphi * dphi);
-    E = f * dt_dλ;
-  }
-  void step(double dλ, double rs) {
-    if (r <= rs)
-      return;
-    rk4Step(*this, dλ, rs);
-    // convert back to cartesian
-    this->x = r * sin(theta) * cos(phi);
-    this->y = r * sin(theta) * sin(phi);
-    this->z = r * cos(theta);
-  }
-};
-vector<Ray> rays;
-
-void raytrace(vector<unsigned char> &pixels, int W, int H) {
-  pixels.resize(W * H * 3);
-
-  // build camera basis
-  vec3 forward = normalize(camera.target - camera.pos);
-  vec3 right = normalize(cross(forward, vec3(0, 1, 0)));
-  vec3 up = cross(right, forward);
-  float aspect = float(W) / float(H);
-  float tanHalfFov = tan(radians(camera.fovY) * 0.5f);
-
-#pragma omp parallel for schedule(dynamic, 4)
-  for (int y = 0; y < H; ++y) {
-    for (int x = 0; x < W; ++x) {
-      // NDC → screen space in [−1,1]
-      float u = (2.0f * (x + 0.5f) / float(W) - 1.0f) * aspect * tanHalfFov;
-      float v = (1.0f - 2.0f * (y + 0.5f) / float(H)) * tanHalfFov;
-      vec3 dir = normalize(u * right + v * up + forward);
-
-      // construct your Ray
-      Ray ray(camera.pos, dir);
-
-      const int MAX_STEPS = 10000;
-      const double D_LAMBDA = 1e7;
-      const double ESCAPE_R = 1e14;
-
-      // 2) march the ray forward in λ
-      vec3 color(0.0f);
-      if (!useGeodesics) {
-        double b = 2.0 * dot(camera.pos, dir);
-        double c0 = dot(camera.pos, camera.pos) - SagaA.r_s * SagaA.r_s;
-        double disc = b * b - 4.0 * c0;
-        if (disc > 0.0) {
-          double t1 = (-b - sqrt(disc)) * 0.5;
-          double t2 = (-b + sqrt(disc)) * 0.5;
-          if (t1 > 0.0 || t2 > 0.0)
-            color = vec3(1.0f, 0.0f, 0.0f);
-        }
-      } else {
-        // full null‐geodesic march
-        Ray ray(camera.pos, dir);
-        for (int i = 0; i < MAX_STEPS; ++i) {
-          if (SagaA.Intercept(ray.x, ray.y, ray.z)) {
-            color = vec3(1.0f, 0.0f, 0.0f);
-            break;
-          }
-          ray.step(D_LAMBDA, SagaA.r_s);
-          if (ray.r > ESCAPE_R) {
-            // escaped to infinity → remains black
-            break;
-          }
-        }
-      }
-
-      int idx = (y * W + x) * 3;
-      pixels[idx + 0] = (unsigned char)(color.r * 255);
-      pixels[idx + 1] = (unsigned char)(color.g * 255);
-      pixels[idx + 2] = (unsigned char)(color.b * 255);
-    }
-  }
-}
-
-void geodesicRHS(const Ray &ray, double rhs[6], double rs) {
-  double r = ray.r;
-  double theta = ray.theta;
-  double dr = ray.dr;
-  double dtheta = ray.dtheta;
-  double dphi = ray.dphi;
-  double E = ray.E;
-
-  double f = 1.0 - rs / r;
-  double dt_dlambda = E / f;
-
-  // First derivatives
-  rhs[0] = dr;
-  rhs[1] = dtheta;
-  rhs[2] = dphi;
-
-  // Second derivatives (from 3D Schwarzschild null geodesics):
-  rhs[3] = -(rs / (2 * r * r)) * f * dt_dlambda * dt_dlambda +
-           (rs / (2 * r * r * f)) * dr * dr +
-           r * (dtheta * dtheta + sin(theta) * sin(theta) * dphi * dphi);
-
-  rhs[4] = -(2.0 / r) * dr * dtheta + sin(theta) * cos(theta) * dphi * dphi;
-
-  rhs[5] =
-      -(2.0 / r) * dr * dphi - 2.0 * cos(theta) / sin(theta) * dtheta * dphi;
-}
-
-void addState(const double y[6], const double k[6], double factor,
-              double out[6]) {
-  for (int i = 0; i < 6; i++) {
-    out[i] = y[i] + factor * k[i];
-  }
-}
-
-void rk4Step(Ray &ray, double d_lambda, double rs) {
-  double y0[6] = {ray.r, ray.theta, ray.phi, ray.dr, ray.dtheta, ray.dphi};
-  double k1[6], k2[6], k3[6], k4[6], temp[6];
-
-  if (ray.r < rs)
-    return;
-  // k1
-  geodesicRHS(ray, k1, rs);
-
-  // k2
-  addState(y0, k1, d_lambda / 2.0, temp);
-  Ray r2 = ray;
-  r2.r = temp[0];
-  r2.theta = temp[1];
-  r2.phi = temp[2];
-  r2.dr = temp[3];
-  r2.dtheta = temp[4];
-  r2.dphi = temp[5];
-
-  geodesicRHS(r2, k2, rs);
-
-  // k3
-  addState(y0, k2, d_lambda / 2.0, temp);
-  Ray r3 = ray;
-  r3.r = temp[0];
-  r3.theta = temp[1];
-  r3.phi = temp[2];
-  r3.dr = temp[3];
-  r3.dtheta = temp[4];
-  r3.dphi = temp[5];
-
-  geodesicRHS(r3, k3, rs);
-
-  // k4
-  addState(y0, k3, d_lambda, temp);
-  Ray r4 = ray;
-  r4.r = temp[0];
-  r4.theta = temp[1];
-  r4.phi = temp[2];
-  r4.dr = temp[3];
-  r4.dtheta = temp[4];
-  r4.dphi = temp[5];
-
-  geodesicRHS(r4, k4, rs);
-
-  // final step
-  ray.r += (d_lambda / 6.0) * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]);
-  ray.theta += (d_lambda / 6.0) * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]);
-  ray.phi += (d_lambda / 6.0) * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2]);
-  ray.dr += (d_lambda / 6.0) * (k1[3] + 2 * k2[3] + 2 * k3[3] + k4[3]);
-  ray.dtheta += (d_lambda / 6.0) * (k1[4] + 2 * k2[4] + 2 * k3[4] + k4[4]);
-  ray.dphi += (d_lambda / 6.0) * (k1[5] + 2 * k2[5] + 2 * k3[5] + k4[5]);
-}
-
 void setupCameraCallbacks(GLFWwindow *window) {
   glfwSetWindowUserPointer(window, &camera);
-  glfwSetMouseButtonCallback(window, Camera::mouseCallback);
-  glfwSetCursorPosCallback(window, Camera::cursorPosCallback);
-  glfwSetScrollCallback(window, Camera::scrollCallback);
-  glfwSetKeyCallback(window, Engine::keyCallback);
+
+  glfwSetMouseButtonCallback(
+      window, [](GLFWwindow *win, int button, int action, int mods) {
+        Camera *cam = (Camera *)glfwGetWindowUserPointer(win);
+        cam->processMouseButton(button, action, mods, win);
+      });
+
+  glfwSetCursorPosCallback(window, [](GLFWwindow *win, double x, double y) {
+    Camera *cam = (Camera *)glfwGetWindowUserPointer(win);
+    cam->processMouseMove(x, y);
+  });
+
+  glfwSetScrollCallback(window,
+                        [](GLFWwindow *win, double xoffset, double yoffset) {
+                          Camera *cam = (Camera *)glfwGetWindowUserPointer(win);
+                          cam->processScroll(xoffset, yoffset);
+                        });
+
+  glfwSetKeyCallback(
+      window, [](GLFWwindow *win, int key, int scancode, int action, int mods) {
+        Camera *cam = (Camera *)glfwGetWindowUserPointer(win);
+        cam->processKey(key, scancode, action, mods);
+      });
 }
 
+// -- MAIN -- //
 int main() {
   setupCameraCallbacks(engine.window);
   vector<unsigned char> pixels(engine.WIDTH * engine.HEIGHT * 3);
 
   auto t0 = Clock::now();
-  lastPrintTime = std::chrono::duration<double>(t0.time_since_epoch()).count();
+  lastPrintTime = chrono::duration<double>(t0.time_since_epoch()).count();
 
+  double lastTime = glfwGetTime();
+  int renderW = 800, renderH = 600, numSteps = 80000;
   while (!glfwWindowShouldClose(engine.window)) {
-    raytrace(pixels, engine.WIDTH, engine.HEIGHT);
-    engine.renderScene(pixels, engine.WIDTH, engine.HEIGHT);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // optional, but good practice
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // 2) FPS counting
-    frameCount++;
-    auto t1 = Clock::now();
-    double now = std::chrono::duration<double>(t1.time_since_epoch()).count();
-    if (now - lastPrintTime >= 1.0) {
-      cout << "FPS: " << frameCount / (now - lastPrintTime) << "\n";
-      frameCount = 0;
-      lastPrintTime = now;
+    double now = glfwGetTime();
+    double dt = now - lastTime; // seconds since last frame
+    lastTime = now;
+
+    // Gravity
+    for (auto &obj : objects) {
+      for (auto &obj2 : objects) {
+        if (&obj == &obj2)
+          continue; // skip self-interaction
+        float dx = obj2.posRadius.x - obj.posRadius.x;
+        float dy = obj2.posRadius.y - obj.posRadius.y;
+        float dz = obj2.posRadius.z - obj.posRadius.z;
+        float distance = sqrt(dx * dx + dy * dy + dz * dz);
+        if (distance > 0) {
+          vector<double> direction = {dx / distance, dy / distance,
+                                      dz / distance};
+          // distance *= 1000;
+          double Gforce = (G * obj.mass * obj2.mass) / (distance * distance);
+
+          double acc1 = Gforce / obj.mass;
+          std::vector<double> acc = {direction[0] * acc1, direction[1] * acc1,
+                                     direction[2] * acc1};
+          if (Gravity) {
+            obj.velocity.x += acc[0];
+            obj.velocity.y += acc[1];
+            obj.velocity.z += acc[2];
+
+            obj.posRadius.x += obj.velocity.x;
+            obj.posRadius.y += obj.velocity.y;
+            obj.posRadius.z += obj.velocity.z;
+            cout << "velocity: " << obj.velocity.x << ", " << obj.velocity.y
+                 << ", " << obj.velocity.z << endl;
+          }
+        }
+      }
     }
+
+    // ---------- GRID ------------- //
+    // 2) rebuild grid mesh on CPU
+    engine.generateGrid(objects);
+    // 5) overlay the bent grid
+    mat4 view = lookAt(camera.position(), camera.target, vec3(0, 1, 0));
+    mat4 proj = perspective(radians(60.0f),
+                            float(engine.COMPUTE_WIDTH) / engine.COMPUTE_HEIGHT,
+                            1e9f, 1e14f);
+    mat4 viewProj = proj * view;
+    engine.drawGrid(viewProj);
+
+    // ---------- RUN RAYTRACER ------------- //
+    glViewport(0, 0, engine.WIDTH, engine.HEIGHT);
+    engine.dispatchCompute(camera);
+    engine.drawFullScreenQuad();
+
+    // 6) present to screen
+    glfwSwapBuffers(engine.window);
+    glfwPollEvents();
   }
 
   glfwDestroyWindow(engine.window);

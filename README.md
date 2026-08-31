@@ -2,7 +2,7 @@
 
 An interactive C++ and OpenGL simulation exploring gravitational lensing, null-geodesic ray tracing in curved spacetime, an accretion disk, and gravitational interactions around a supermassive black hole.
 
-![Black Hole 3D Simulation](assets/black-hole-3d.png)
+![Black Hole 3D Simulation](screenshots/black-hole-3d.png)
 
 This project provides real-time visualizations of how extreme mass warps surrounding spacetime and bends light rays. It includes an interactive 3D simulation accelerated by GPU compute shaders, an interactive 2D gravitational lensing simulator, and a standalone CPU-based geodesic reference prototype.
 
@@ -24,7 +24,7 @@ This project provides real-time visualizations of how extreme mass warps surroun
 
 The 2D simulation (`black_hole_lensing_2d`) demonstrates how light rays emitted from a light source bend as they pass near a black hole.
 
-![2D Gravitational Lensing](assets/lensing-2d.png)
+![2D Gravitational Lensing](screenshots/lensing-2d.png)
 
 ### Physics & Algorithm
 - **Ray Generation**: An array of parallel light rays is initialized on the left edge of the screen, traveling horizontally toward the right.
@@ -40,7 +40,7 @@ The 2D simulation (`black_hole_lensing_2d`) demonstrates how light rays emitted 
 
 The main 3D application (`black_hole_simulation_3d`) renders a fully interactive 3D scene containing the supermassive black hole Sagittarius A*, an accretion disk, orbiting celestial objects, and an overlaid spacetime grid.
 
-![3D Black Hole and Star](assets/black-hole-star.png)
+![3D Black Hole and Star](screenshots/black-hole-star.png)
 
 ### Scene Components
 - **Supermassive Black Hole**: Modeled after Sagittarius A* ($M \approx 8.54 \times 10^{36}\text{ kg}$), with its Schwarzschild radius defining the event horizon.
@@ -49,7 +49,7 @@ The main 3D application (`black_hole_simulation_3d`) renders a fully interactive
 - **Celestial Bodies / Stars**: Spherical objects rendered with diffuse lighting that can interact gravitationally with the system.
 - **Orbital Camera**: Orbits smoothly around the center of mass using spherical coordinates (azimuth, elevation, radius).
 
-![Warped Spacetime Grid](assets/spacetime-grid.png)
+![Warped Spacetime Grid](screenshots/spacetime-grid.png)
 
 ### Spacetime Grid Representation
 The spacetime grid is a 3D wireframe mesh embedded on the $X-Z$ plane. The vertical displacement ($Y$-axis) of the grid vertices is depressed near massive bodies according to Flamm's paraboloid geometry:

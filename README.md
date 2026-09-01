@@ -235,7 +235,7 @@ Blackhole/
 │   ├── grid.vert                     # Vertex shader for 3D warped spacetime grid
 │   └── grid.frag                     # Fragment shader for 3D warped spacetime grid
 │
-├── assets/                           # Screenshots and documentation media
+├── screenshots/                      # Screenshots and documentation media
 │   ├── black-hole-3d.png
 │   ├── black-hole-star.png
 │   ├── spacetime-grid.png
@@ -322,3 +322,12 @@ This repository represents my own study and adaptation of the project,
 including code organization, documentation, CMake/build improvements,
 runtime asset handling, comments, screenshots, and other modifications
 made while studying and extending the original implementation.
+
+---
+
+## References & Further Reading
+
+- **General Relativity & Geodesics**: Misner, C. W., Thorne, K. S., & Wheeler, J. A. – *Gravitation* (W. H. Freeman, 1973).
+- **Black Hole Ray Tracing**: James, O., von Tunzelmann, E., Franklin, P., & Thorne, K. S. (2015) – *Gravitational Lensing by Spinning Black Holes in Astrophysics, and in the Movie Interstellar*, Classical and Quantum Gravity, 32(6), 065001.
+- **Flamm's Paraboloid**: Flamm, L. (1916) – *Beiträge zur Einsteinschen Gravitationstheorie*, Physikalische Zeitschrift, 17, 448.
+- **Numerical Integration (RK4)**: Press, W. H., Teukolsky, S. A., Vetterling, W. T., & Flannery, B. P. – *Numerical Recipes: The Art of Scientific Computing* (Cambridge University Press).

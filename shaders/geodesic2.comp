@@ -1,0 +1,130 @@
+// ============================================================================
+// GPU Compute Shader: 3D Black Hole Ray Tracing & Gravitational Lensing
+// ============================================================================
+//
+// What this shader does:
+// This compute shader simulates gravitational lensing around a supermassive
+// black hole (Sagittarius A*). For each pixel on screen, it calculates the
+// path of a light ray (a null geodesic) traveling through curved spacetime.
+//
+// Why use the GPU?
+// Tracing a curved light ray requires tens of thousands of numerical integration
+// steps. Doing this for every pixel on the CPU is slow; on the GPU, thousands of
+// threads run simultaneously across compute workgroups, allowing real-time
+// 3D visualization.
+//
+// Execution Model:
+// - Each invocation (thread) computes the color for exactly one pixel.
+// - Threads are organized in 16x16 workgroups (256 threads per group).
+// - The final pixel colors are written directly into an OpenGL 2D texture.
+// ============================================================================
+
+#version 430
+layout(local_size_x = 16, local_size_y = 16) in;
+
+// ----------------------------------------------------------------------------
+// Uniform Buffers & Output Image (Data received from CPU)
+// ----------------------------------------------------------------------------
+
+// Binding 0: Output 2D texture where ray-traced pixel colors are stored
+layout(binding = 0, rgba8) writeonly uniform image2D outImage;
+
+// Binding 1: Camera state (position, basis vectors, aspect ratio, and field of view)
+// std140 layout requires explicit padding floats for 16-byte alignment of vec3
+layout(std140, binding = 1) uniform Camera {
+    vec3 camPos;     float _pad0;
+    vec3 camRight;   float _pad1;
+    vec3 camUp;      float _pad2;
+    vec3 camForward; float _pad3;
+    float tanHalfFov;
+    float aspect;
+    bool moving;
+    int   _pad4;
+} cam;
+
+// Binding 2: Accretion disk geometric dimensions
+layout(std140, binding = 2) uniform Disk {
+    float disk_r1;   // Inner radius of the accretion disk in meters
+    float disk_r2;   // Outer radius of the accretion disk in meters
+    float disk_num;  // Disk density / ray count parameter
+    float thickness; // Accretion disk vertical thickness in meters
+};
+
+// Binding 3: Celestial objects in the scene (e.g. orbiting stars and black hole)
+layout(std140, binding = 3) uniform Objects {
+    int numObjects;
+    vec4 objPosRadius[16]; // xyz = position in meters, w = radius in meters
+    vec4 objColor[16];     // rgb = surface color
+    float  mass[16];       // Mass in kilograms
+};
+
+// ----------------------------------------------------------------------------
+// Physical & Numerical Constants
+// ----------------------------------------------------------------------------
+// Schwarzschild radius of Sagittarius A* (event horizon boundary in meters)
+// Inside this radius, light cannot escape.
+const float SagA_rs = 1.269e10;
+
+// Integration step size along the ray's affine parameter (lambda)
+const float D_LAMBDA = 1e7;
+
+// Distance threshold for rays that escape into deep space (meters)
+const double ESCAPE_R = 1e30;
+
+// Globals to store intersection information when a ray hits a celestial object
+vec4 objectColor = vec4(0.0);
+vec3 hitCenter = vec3(0.0);
+float hitRadius = 0.0;
+
+// ----------------------------------------------------------------------------
+// Light Ray State Representation
+// ----------------------------------------------------------------------------
+// A light ray is tracked in both Cartesian (x, y, z) and spherical (r, theta, phi)
+// coordinates, along with its coordinate velocities and conserved physical quantities.
+struct Ray {
+    float x, y, z, r, theta, phi;
+    float dr, dtheta, dphi;
+    float E, L; // Conserved Energy and Angular Momentum
+};
+
+// Initializes a ray starting at the camera position in a given direction
+Ray initRay(vec3 pos, vec3 dir) {
+    Ray ray;
+    ray.x = pos.x; ray.y = pos.y; ray.z = pos.z;
+    ray.r = length(pos);
+    ray.theta = acos(pos.z / ray.r);
+    ray.phi = atan(pos.y, pos.x);
+
+    // Convert Cartesian direction vector into spherical velocity components
+    float dx = dir.x, dy = dir.y, dz = dir.z;
+    ray.dr     = sin(ray.theta)*cos(ray.phi)*dx + sin(ray.theta)*sin(ray.phi)*dy + cos(ray.theta)*dz;
+    ray.dtheta = (cos(ray.theta)*cos(ray.phi)*dx + cos(ray.theta)*sin(ray.phi)*dy - sin(ray.theta)*dz) / ray.r;
+    ray.dphi   = (-sin(ray.phi)*dx + cos(ray.phi)*dy) / (ray.r * sin(ray.theta));
+
+    // Calculate conserved constants of motion from the Schwarzschild metric
+    ray.L = ray.r * ray.r * sin(ray.theta) * ray.dphi;
+    float f = 1.0 - SagA_rs / ray.r; // Metric lapse factor: (1 - r_s / r)
+    float dt_dL = sqrt((ray.dr*ray.dr)/f + ray.r*ray.r*(ray.dtheta*ray.dtheta + sin(ray.theta)*sin(ray.theta)*ray.dphi*ray.dphi));
+    ray.E = f * dt_dL;
+
+    return ray;
+}
+
+// Checks if the ray has entered the event horizon (r <= r_s)
+bool intercept(Ray ray, float rs) {
+    return ray.r <= rs;
+}
+
+// Tests intersection with spherical celestial objects (e.g. stars)
+// Returns true on hit and captures center, radius, and color for shading
+bool interceptObject(Ray ray) {
+    vec3 P = vec3(ray.x, ray.y, ray.z);
+    for (int i = 0; i < numObjects; ++i) {
+        vec3 center = objPosRadius[i].xyz;
+        float radius = objPosRadius[i].w;
+        if (distance(P, center) <= radius) {
+            objectColor = objColor[i];
+            hitCenter = center;
+            hitRadius = radius;
+            return true;
+        }
